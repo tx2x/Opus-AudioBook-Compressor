@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Deque, Dict, List, Optional, Set, Tuple
 
 APP_NAME = "Opus AudioBook Compressor"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 # =============================================================================
 # USER CONFIGURATION  (safe to edit)
@@ -52,6 +52,7 @@ APP_VERSION = "1.0.0"
 DEFAULT_THREADS = 8              # parallel FFmpeg processes (can be changed at runtime)
 DEFAULT_PRESET_INDEX = 2         # 1-based index into PRESETS below
 INCLUDE_SUBDIRS_DEFAULT = True   # process sub-directories by default
+SOUND_DEFAULT = True             # beep when finished (1 beep) or on errors (3 beeps)
 OUTPUT_SUFFIX = "_opus"          # suffix of the output folder in "save as new" mode
 LOGS_DIR_NAME = "logs"           # log files are written to <script folder>/<this>
 
@@ -490,6 +491,7 @@ class Settings:
     recursive: bool = INCLUDE_SUBDIRS_DEFAULT
     mode: str = MODE_COPY
     threads: int = DEFAULT_THREADS
+    sound: bool = SOUND_DEFAULT
 
 
 # =============================================================================
@@ -529,6 +531,39 @@ def list_folders(base: Path) -> List[FolderInfo]:
         if any(e.is_audio for e in entries):
             result.append(FolderInfo(child, entries))
     return result
+
+
+# =============================================================================
+# Sound notification (no external files: system beep only)
+# =============================================================================
+def beep(kind: str) -> None:
+    """kind='done' -> 1 beep, kind='error' -> 3 beeps. Never raises."""
+    count, freq, length, gap = (1, 1000, 450, 0.0) if kind == "done" else (3, 750, 220, 0.12)
+    try:
+        if os.name == "nt":
+            import winsound
+            for i in range(count):
+                try:
+                    winsound.Beep(freq, length)
+                except RuntimeError:
+                    winsound.MessageBeep()
+                    time.sleep(0.25)
+                if i < count - 1:
+                    time.sleep(gap)
+        elif sys.stdout.isatty():
+            for i in range(count):
+                with UI.lock:
+                    sys.stdout.write("\a")
+                    sys.stdout.flush()
+                if i < count - 1:
+                    time.sleep(0.3)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def notify(st: "Settings", kind: str) -> None:
+    if st.sound:
+        beep(kind)
 
 
 # =============================================================================
@@ -587,6 +622,8 @@ def choose_folders(base: Path, st: Settings) -> Optional[List[FolderInfo]]:
         out("  " + paint("Location: ", "gray") + str(base))
         out("  " + paint("Subfolders: ", "gray") +
             (paint("INCLUDED", "green", "bold") if st.recursive else paint("NOT included", "yellow", "bold")))
+        out("  " + paint("Sound:      ", "gray") +
+            (paint("ON", "green", "bold") if st.sound else paint("OFF", "yellow", "bold")))
         out()
         if not folders:
             ui_warn("No folders with audio files were found next to the script.")
@@ -605,6 +642,7 @@ def choose_folders(base: Path, st: Settings) -> Optional[List[FolderInfo]]:
             paint("1,3-5", "cyan", "bold") + "=pick",
             paint("R", "cyan", "bold") + "=refresh",
             paint("S", "cyan", "bold") + "=toggle subfolders",
+            paint("B", "cyan", "bold") + "=toggle sound",
             paint("Q", "cyan", "bold") + "=quit",
         ]))
         ans = ask("Your choice " + paint("[all]", "cyan") + ":", "").lower()
@@ -616,6 +654,10 @@ def choose_folders(base: Path, st: Settings) -> Optional[List[FolderInfo]]:
             out(paint("  Refreshing folder list...", "gray"))
         elif ans in ("s", "subdirs"):
             st.recursive = not st.recursive
+        elif ans in ("b", "sound", "beep"):
+            st.sound = not st.sound
+            if st.sound:
+                beep("done")
         elif ans in ("q", "quit", "exit"):
             return None
         else:
@@ -1219,6 +1261,7 @@ def run_once(base: Path, st: Settings, ffmpeg: str, ffprobe: str, ffversion: str
         ("Output", f'new folders with "{OUTPUT_SUFFIX}" suffix' if mode == MODE_COPY
          else "REPLACE originals (deleted after verified conversion)"),
         ("Threads", str(threads)),
+        ("Sound", "on" if st.sound else "off"),
     ]
     for k, v in rows:
         colour = "yellow" if (k == "Output" and mode == MODE_REPLACE) else "white"
@@ -1267,6 +1310,9 @@ def run_once(base: Path, st: Settings, ffmpeg: str, ffprobe: str, ffversion: str
         if mode == MODE_COPY and not cancelled:
             copy_extras(extras)
         print_report(folders, jobs, time.time() - start, cancelled)
+        if not cancelled:
+            has_problems = any(j.status in ("failed", "pending", "cancelled") for j in jobs)
+            notify(st, "error" if has_problems else "done")
         ui_info("Log file: " + paint(str(log_path), "cyan"))
     finally:
         log.removeHandler(handler)
@@ -1279,6 +1325,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--threads", type=int, help=f"default number of threads (default {DEFAULT_THREADS})")
     ap.add_argument("--ffmpeg", help="path to the ffmpeg binary or to the folder containing ffmpeg and ffprobe")
     ap.add_argument("--no-color", action="store_true", help="disable colours")
+    ap.add_argument("--no-sound", action="store_true", help="disable the beep notifications")
     ap.add_argument("--ascii", action="store_true", help="use plain ASCII characters only")
     return ap.parse_args()
 
@@ -1298,6 +1345,8 @@ def main() -> None:
     st = Settings()
     if args.threads and 1 <= args.threads <= 64:
         st.threads = args.threads
+    if args.no_sound:
+        st.sound = False
 
     banner()
     ffmpeg, ffprobe, ffversion = ensure_ffmpeg(args.ffmpeg)
@@ -1321,6 +1370,7 @@ def main() -> None:
     except Exception as e:  # noqa: BLE001
         ui_error(f"Unexpected error: {e}")
         log.exception("Unhandled exception")
+        notify(st, "error")
         pause_before_exit()
         raise SystemExit(1)
     out(paint("  Bye!", "cyan"))

@@ -22,6 +22,7 @@ This tool replaces paid online converters: it uses the **same encoder** (libopus
 - ⚡ **Multi-threaded** – 8 parallel conversions by default, configurable at startup.
 - 📊 **Live progress** – colour progress bar with speed (× real-time) and ETA, based on audio duration, not file count.
 - 📉 **Size report** – before / after / % saved for every folder (with a sub-folder tree) and for everything together.
+- 🔔 **Sound notification** – one beep when everything is done, three beeps if any file failed or an error occurred. On by default, toggle with `B` in the menu or disable with `--no-sound`. No external sound files.
 - 🪵 **Clear errors + log file** – human-readable explanations (corrupted file, no disk space, locked file…) and a full log per run in `logs/`.
 - 🛡️ **Safe by design** – temp files + atomic rename, output length verification, Ctrl+C cleanup, resume support (already converted files are skipped).
 - 🖥️ **Cross-platform** – Windows 10+, Linux, macOS. Works in classic Windows 10 consoles (ANSI colours are enabled automatically; `--ascii` mode available).
@@ -67,7 +68,7 @@ FFmpeg is looked up in this order: `--ffmpeg` argument → next to the script (`
    | Step | Question | Default |
    |---|---|---|
    | 1 | Compression preset | `2` – High (64 kbps mono) |
-   | 2 | Folders (`Enter` all · `1,3-5` · `R` refresh · `S` toggle sub-folders · `Q` quit) | all, sub-folders included |
+   | 2 | Folders (`Enter` all · `1,3-5` · `R` refresh · `S` toggle sub-folders · `B` toggle sound · `Q` quit) | all, sub-folders included, sound on |
    | 3 | Output mode | new `_opus` folders |
    | 4 | Threads | 8 |
    | – | After finishing: start over or exit? | exit |
@@ -78,6 +79,7 @@ FFmpeg is looked up in this order: `--ffmpeg` argument → next to the script (`
 |---|---|
 | `--threads N` | Default thread count (still confirmable in the prompt). |
 | `--ffmpeg PATH` | Path to the `ffmpeg` binary or to the folder with `ffmpeg` and `ffprobe`. |
+| `--no-sound` | Disable the beep notifications (they can also be toggled with `B` in the folder menu). |
 | `--no-color` | Disable colours (also respects the `NO_COLOR` environment variable). |
 | `--ascii` | Use plain ASCII instead of box/block characters (for fonts without them). |
 
@@ -115,7 +117,7 @@ PRESETS: List[Preset] = [
 | `compression_level` | 0–10 encoder complexity; `10` = best quality (default) |
 | `extra_args` | Any additional raw FFmpeg arguments |
 
-Other global settings you may want to change are at the top of the script: `DEFAULT_THREADS`, `DEFAULT_PRESET_INDEX`, `OUTPUT_SUFFIX`, `INCLUDE_SUBDIRS_DEFAULT`, `AUDIO_EXTENSIONS`.
+Other global settings you may want to change are at the top of the script: `DEFAULT_THREADS`, `DEFAULT_PRESET_INDEX`, `SOUND_DEFAULT`, `OUTPUT_SUFFIX`, `INCLUDE_SUBDIRS_DEFAULT`, `AUDIO_EXTENSIONS`.
 
 ## Output modes
 
@@ -155,6 +157,18 @@ Notes on the settings:
 - **`voip` application** – enables the encoder's speech-oriented heuristics (this is what "Voice" means in most converters). Use `audio` for music-heavy productions.
 - **48 kHz** – Opus always runs at 48 kHz internally; the encoder picks the real audio bandwidth for the bitrate.
 
+## Sound notifications
+
+| Event | Sound |
+|---|---|
+| All files converted successfully | 1 beep |
+| At least one file failed, files were not processed, or an unexpected error occurred | 3 beeps |
+| Cancelled with Ctrl+C | silent |
+
+- **Windows:** uses the built-in `winsound` beep (a short tone through the PC speaker/audio device).
+- **Linux / macOS:** sends the terminal bell (`BEL`) – make sure the bell is enabled in your terminal's settings.
+- Press **`B`** in the folder menu to turn sound on/off (the state is shown as `Sound: ON/OFF` and kept when you start over), or start with `--no-sound`. To change the default, edit `SOUND_DEFAULT` at the top of the script.
+
 ## Logs and errors
 
 Every run writes `logs/opus_compressor_YYYYMMDD_HHMMSS.log` (UTF-8) with the settings, FFmpeg version, one line per converted file and the complete FFmpeg output for any failure. On screen you get a short explanation, for example:
@@ -170,6 +184,7 @@ Every run writes `logs/opus_compressor_YYYYMMDD_HHMMSS.log` (UTF-8) with the set
 |---|---|
 | *FFmpeg not found* | Install it (see above) or pass `--ffmpeg "C:\path\to\ffmpeg\bin"`. |
 | *No libopus encoder* | Use a full FFmpeg build (Gyan.FFmpeg, BtbN builds, distro packages are fine). |
+| No beep on Linux/macOS | Enable the terminal bell (audible bell) in your terminal emulator's preferences. |
 | Odd characters instead of bars/lines | Run with `--ascii`, or switch the console font to *Consolas* / *Cascadia*. |
 | Colours look like `←[96m` | Use Windows 10 1511+ with a modern console, Windows Terminal, or run with `--no-color`. |
 | Output is larger than the input | The source bitrate was lower than the preset. Pick a lower preset for such files. |
@@ -187,5 +202,4 @@ The code was written using web version of Claude Sonnet 5.5 😁.
 ## License
 
 [MIT](LICENSE)
-
 FFmpeg and libopus are separate projects with their own licenses; this tool only calls the `ffmpeg` / `ffprobe` executables.
