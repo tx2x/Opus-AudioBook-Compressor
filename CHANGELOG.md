@@ -3,7 +3,14 @@
 All notable changes to **Opus AudioBook Compressor** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [1.1.0]
+## [1.1.1] - 2026-11-23
+
+### Fixed
+- False error `Output length (…) differs from the source (…); the source may be damaged` for MP3 files without a Xing/LAME header (typically files with a large embedded cover). For such files FFmpeg only *estimates* the duration from bitrate and file size, so the estimate was wrong while the converted file was correct.
+- Verification is now two-step: the output length is always compared with the audio that FFmpeg actually encoded; the comparison with the source's declared length is a hard check only when that length is reliable, otherwise it is just noted in the log.
+- The progress bar now always ends at 100 % even when source durations were estimated.
+
+## [1.1.0] - 2026-11-22
 
 ### Added
 - Sound notifications without external files: **1 beep** when processing finishes successfully, **3 beeps** when any file failed, files were not processed, or an unexpected error occurred. Cancelling with Ctrl+C is silent.
@@ -14,7 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 - Crash `Unexpected error: ''` shown in the summary step on consoles with colour output enabled (an empty style name was passed to the colouring helper).
 
-## [1.0.0]
+## [1.0.0] - 2026-11-20
 
 ### Added
 - Initial release.
@@ -27,5 +34,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Readable error messages and a per-run log file in `logs/`.
 - Windows 10+ console support, optional automatic FFmpeg download on Windows.
 
+[1.1.1]: https://github.com/tx2x/Opus-AudioBook-Compressor/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/tx2x/Opus-AudioBook-Compressor/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/tx2x/Opus-AudioBook-Compressor/releases/tag/v1.0.0

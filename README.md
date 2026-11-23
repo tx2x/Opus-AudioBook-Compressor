@@ -143,7 +143,7 @@ Other global settings you may want to change are at the top of the script: `DEFA
 2. **Analyse** – every file is probed with FFprobe (duration, streams, cover art) in parallel.
 3. **Convert** – FFmpeg + **libopus** per file, in a thread pool, largest files first for even load balancing:
    `-c:a libopus -b:a 64k -vbr on -application voip -compression_level 10 -ac 1 -ar 48000`
-4. **Verify** – the result is probed again; a duration mismatch marks the file as failed and the original is kept.
+4. **Verify** – the result is probed again and its length must match the audio FFmpeg actually encoded; if the source declares a reliable length (not just an estimate), it must match that too. Any mismatch marks the file as failed and the original is kept.
 5. **Report** – sizes before/after per folder (with sub-folders) and in total.
 
 ### Why FFmpeg + libopus on every platform?
@@ -190,10 +190,6 @@ Every run writes `logs/opus_compressor_YYYYMMDD_HHMMSS.log` (UTF-8) with the set
 | Output is larger than the input | The source bitrate was lower than the preset. Pick a lower preset for such files. |
 | Very long Windows paths fail | Enable long paths in Windows or move the books to a shorter path. |
 | Cover art missing in some player | A warning is shown if the cover could not be embedded; audio is still converted. |
-
-## Contributing
-
-Issues and pull requests are welcome – especially new presets, platform reports and player-compatibility notes.
 
 ## Credits
 

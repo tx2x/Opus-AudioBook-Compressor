@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Deque, Dict, List, Optional, Set, Tuple
 
 APP_NAME = "Opus AudioBook Compressor"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 
 # =============================================================================
 # USER CONFIGURATION  (safe to edit)
@@ -464,6 +464,7 @@ class ProbeInfo:
     covers: List[int]
     bitrate: int = 0
     cover_info: Optional[Tuple[str, int, int]] = None   # (codec, width, height) of the first cover
+    duration_reliable: bool = True    # False when FFmpeg only *estimates* it (e.g. MP3 without Xing/LAME header)
 
 
 @dataclass
@@ -478,6 +479,7 @@ class Job:
     status: str = "pending"        # pending / ok / resumed / failed / cancelled
     out_size: int = 0
     message: str = ""
+    encoded: float = 0.0           # seconds of audio actually decoded/encoded (from FFmpeg progress)
     warnings: List[str] = field(default_factory=list)
 
     @property
@@ -723,7 +725,7 @@ def build_jobs(folders: List[FolderInfo], st: Settings, base: Path) -> Tuple[Lis
 
 def probe_file(ffprobe: str, path: Path) -> ProbeInfo:
     try:
-        r = subprocess.run([ffprobe, "-v", "error", "-show_format", "-show_streams", "-of", "json", str(path)],
+        r = subprocess.run([ffprobe, "-v", "warning", "-show_format", "-show_streams", "-of", "json", str(path)],
                            capture_output=True, text=True, encoding="utf-8", errors="replace",
                            timeout=180, creationflags=CREATE_FLAGS)
     except subprocess.TimeoutExpired:
@@ -756,7 +758,8 @@ def probe_file(ffprobe: str, path: Path) -> ProbeInfo:
 
     dur = num(data.get("format", {}).get("duration")) or num(audio[0].get("duration"))
     return ProbeInfo(duration=dur, duration_known=dur > 0, audio_index=audio[0]["index"],
-                     covers=covers, bitrate=int(num(audio[0].get("bit_rate"))), cover_info=cover_info)
+                     covers=covers, bitrate=int(num(audio[0].get("bit_rate"))), cover_info=cover_info,
+                     duration_reliable="estimating duration" not in (r.stderr or "").lower())
 
 
 def probe_all(jobs: List[Job], ffprobe: str, threads: int) -> None:
@@ -868,7 +871,7 @@ class Progress:
             done_sec = self.completed + sum(self.current.values())
             elapsed = max(time.time() - self.t0, 1e-6)
             speed = done_sec / elapsed
-            frac = min(1.0, done_sec / self.total)
+            frac = 1.0 if (self.ok + self.failed) >= self.total_files else min(1.0, done_sec / self.total)
             eta = (self.total - done_sec) / speed if speed > 0 and done_sec > 0 else 0
             return dict(frac=frac, done=self.ok + self.failed, active=len(self.current),
                         failed=self.failed, speed=speed, eta=eta, elapsed=elapsed)
@@ -986,7 +989,9 @@ def run_ffmpeg(ctx: Context, cmd: List[str], job: Job) -> Tuple[int, str]:
                 break
             if line.startswith(("out_time_us=", "out_time_ms=")):
                 try:
-                    ctx.progress.update(job, int(line.split("=", 1)[1]) / 1_000_000)
+                    secs = int(line.split("=", 1)[1]) / 1_000_000
+                    job.encoded = max(job.encoded, secs)
+                    ctx.progress.update(job, secs)
                 except ValueError:
                     pass
         if ctx.stop.is_set():
@@ -1031,6 +1036,7 @@ def process_job(ctx: Context, job: Job) -> None:
         try:
             for meta in attempts:
                 prog.update(job, 0)
+                job.encoded = 0.0
                 safe_unlink(part)
                 rc, tail = run_ffmpeg(ctx, build_command(ctx, job, part, meta), job)
                 if ctx.stop.is_set():
@@ -1049,12 +1055,21 @@ def process_job(ctx: Context, job: Job) -> None:
             raise ConvError(explain_error(tail, rc), tail)
 
         out_info = probe_file(ctx.ffprobe, part)
+        # 1) The output must match what FFmpeg actually decoded/encoded (always reliable).
+        if job.encoded > 0 and abs(out_info.duration - job.encoded) > max(2.0, 0.005 * job.encoded):
+            raise ConvError(
+                f"Output length ({fmt_time(out_info.duration)}) does not match the encoded audio "
+                f"({fmt_time(job.encoded)}); the conversion may be incomplete. Original kept.")
+        # 2) Compare with the source's declared length - only when it is not a mere estimate.
         if job.probe.duration_known:
             tol = max(DURATION_TOLERANCE[0], DURATION_TOLERANCE[1] * job.probe.duration)
             if abs(out_info.duration - job.probe.duration) > tol:
-                raise ConvError(
-                    f"Output length ({fmt_time(out_info.duration)}) differs from the source "
-                    f"({fmt_time(job.probe.duration)}); the source may be damaged. Original kept.")
+                if job.probe.duration_reliable:
+                    raise ConvError(
+                        f"Output length ({fmt_time(out_info.duration)}) differs from the source "
+                        f"({fmt_time(job.probe.duration)}); the source may be damaged. Original kept.")
+                log.info("Source duration is only an estimate (%s) - actual %s: %s",
+                         fmt_time(job.probe.duration), fmt_time(out_info.duration), job.src)
         os.replace(part, job.dst)
         job.out_size = job.dst.stat().st_size
         if ctx.mode == MODE_REPLACE:
